@@ -260,6 +260,105 @@ def normalize_addresses(data: list[str]) -> typ.Iterable[str]:
             yield socket.gethostbyname(v)
 
 
+def stealth_scan(
+    addresses: typ.Sequence[str],
+    ports: typ.Sequence[int],
+    delay: float,
+    sniff_timeout: float,
+) -> None:
+    local_ip = get_local_ip()
+
+    logger.debug(f"{local_ip=}")
+
+    # Для установки соединения
+    # -> SYN
+    # <- SYN ACK
+    # -> ACK
+
+    sniff_th = threading.Thread(
+        target=sniff_packets,
+        args=(local_ip, addresses, ports),
+        daemon=True,
+    )
+
+    sniff_th.start()
+
+    sent_time = 0
+
+    with socket.socket(
+        socket.AF_INET,
+        socket.SOCK_RAW,
+        socket.IPPROTO_RAW,
+    ) as sock:
+        for dst_ip, dst_port in itertools.product(addresses, ports):
+            if (dt := sent_time - time.monotonic()) > 0:
+                logger.debug("wait %.3fs", dt)
+                time.sleep(dt)
+
+            pack = make_syn_packet(
+                local_ip,
+                random.randint(20000, 50000),
+                dst_ip,
+                dst_port,
+            )
+
+            try:
+                n = sock.sendto(pack, (dst_ip, 0))
+                logger.debug("bytes sent: %d", n)
+            except BaseException as ex:
+                logger.exception(ex)
+
+            sent_time = time.monotonic() + delay
+
+    sniff_th.join(sniff_timeout)
+    logger.info("finished")
+
+
+# def get_service_names() -> dict[int, str]:
+#     rv = {}
+#     with open("/etc/services") as f:
+#         for line in f:
+#             if not line.strip().endswith("/tcp"):
+#                 continue
+#             name, port = line.split()
+#             port, _ = port.split("/")
+#             rv[name] = int(port)
+#     return rv
+
+
+# def invert_dict(d: dict) -> dict:
+#     return dict(map(reversed, d.items()))
+
+
+def sniff_packets(local_ip: str, addresses: set[str], ports: set[int]) -> None:
+    with socket.socket(
+        socket.AF_INET,
+        socket.SOCK_RAW,
+        socket.IPPROTO_TCP,
+    ) as sock:
+        while 42:
+            pack = sock.recv(65535)
+
+            src_ip = socket.inet_ntoa(pack[12:16])
+            if src_ip not in addresses:
+                continue
+
+            dst_ip = socket.inet_ntoa(pack[16:20])
+            if dst_ip != local_ip:
+                continue
+
+            src_port = int.from_bytes(pack[20:22])
+            # dst_port = int.from_bytes(pack[22:24])
+            if src_port not in ports:
+                continue
+
+            flags = int.from_bytes(pack[32:34]) & 0b111_111_111
+
+            # Порт открыт
+            if (flags & TcpFlags.SYN_ACK) == TcpFlags.SYN_ACK:
+                print(f"{src_ip}:{src_port}")
+
+
 def parse_args(
     argv: list[str] | None,
 ) -> tuple[argparse.ArgumentParser, NameSpace]:
@@ -315,99 +414,15 @@ def main(argv: list[str] | None = None) -> None:
 
     ports = set(normalize_ports(args.ports)) if args.ports else WELL_KNOWN_PORTS
 
-    delay = 1.0 / args.rate_limit
-
-    local_ip = get_local_ip()
-
-    logger.debug(f"{local_ip=}")
-
-    # Для установки соединения
-    # -> SYN
-    # <- SYN ACK
-    # -> ACK
-
-    sniff_th = threading.Thread(
-        target=sniff_packets,
-        args=(local_ip, addresses, ports),
-        daemon=True,
-    )
-
-    sniff_th.start()
-
-    sent_time = 0
-
-    with socket.socket(
-        socket.AF_INET,
-        socket.SOCK_RAW,
-        socket.IPPROTO_RAW,
-    ) as sock:
-        for dst_ip, dst_port in itertools.product(addresses, ports):
-            if (dt := sent_time - time.monotonic()) > 0:
-                logger.debug("wait %.3fs", dt)
-                time.sleep(dt)
-
-            pack = make_syn_packet(
-                local_ip,
-                random.randint(20000, 50000),
-                dst_ip,
-                dst_port,
-            )
-
-            try:
-                n = sock.sendto(pack, (dst_ip, 0))
-                logger.debug("bytes sent: %d", n)
-            except BaseException as ex:
-                logger.exception(ex)
-
-            sent_time = time.monotonic() + delay
-
-    sniff_th.join(args.sniff_timeout)
-    logger.info("finished")
-
-
-# def get_service_names() -> dict[int, str]:
-#     rv = {}
-#     with open("/etc/services") as f:
-#         for line in f:
-#             if not line.strip().endswith("/tcp"):
-#                 continue
-#             name, port = line.split()
-#             port, _ = port.split("/")
-#             rv[name] = int(port)
-#     return rv
-
-
-# def invert_dict(d: dict) -> dict:
-#     return dict(map(reversed, d.items()))
-
-
-def sniff_packets(local_ip: str, addresses: set[str], ports: set[int]) -> None:
-    with socket.socket(
-        socket.AF_INET,
-        socket.SOCK_RAW,
-        socket.IPPROTO_TCP,
-    ) as sock:
-        while 42:
-            pack = sock.recv(65535)
-
-            src_ip = socket.inet_ntoa(pack[12:16])
-            if src_ip not in addresses:
-                continue
-
-            dst_ip = socket.inet_ntoa(pack[16:20])
-            if dst_ip != local_ip:
-                continue
-
-            src_port = int.from_bytes(pack[20:22])
-            # dst_port = int.from_bytes(pack[22:24])
-            if src_port not in ports:
-                continue
-
-            flags = int.from_bytes(pack[32:34]) & 0b111_111_111
-
-            # Порт открыт
-            if (flags & TcpFlags.SYN_ACK) == TcpFlags.SYN_ACK:
-                print(f"{src_ip}:{src_port}")
+    try:
+        stealth_scan(
+            addresses,
+            ports,
+            1.0 / args.rate_limit,
+            args.sniff_timeout,
+        )
+    except KeyboardInterrupt:
+        logger.warning("interruptted by user")
 
 
 if __name__ == "__main__":
