@@ -21,5 +21,5 @@ sudo env "PATH=$PATH" stealth-port-scan ...
 sudo $(which stealth-port-scan) ...
 
 # or just clone repo and run
-sudo ./stealth_port_scan.py -a www.linux.org.ru -p 1-10000 -r 1000
+sudo ./stealth_port_scan.py -a www.linux.org.ru -p 21-23 80 443 8080 8443
 ```

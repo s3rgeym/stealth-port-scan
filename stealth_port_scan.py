@@ -11,8 +11,8 @@ import socket
 import sys
 import threading
 import time
-import typing as typ
 from enum import IntFlag, auto
+from typing import Iterable, Sequence
 
 __version__ = "0.0.1"
 
@@ -88,7 +88,6 @@ class ColorHandler(logging.StreamHandler):
 
 
 logger = logging.getLogger(__name__)
-logger.addHandler(ColorHandler())
 
 
 class TcpFlags(IntFlag):
@@ -222,37 +221,9 @@ def make_syn_packet(
     return iph + tcph[:16] + check.to_bytes(2) + tcph[18:]
 
 
-def sniff_packets(local_ip: str, addresses: set[str], ports: set[int]) -> None:
-    with socket.socket(
-        socket.AF_INET,
-        socket.SOCK_RAW,
-        socket.IPPROTO_TCP,
-    ) as sock:
-        while 42:
-            pack = sock.recv(65535)
-
-            src_ip = socket.inet_ntoa(pack[12:16])
-            if src_ip not in addresses:
-                continue
-
-            dst_ip = socket.inet_ntoa(pack[16:20])
-            if dst_ip != local_ip:
-                continue
-
-            src_port = int.from_bytes(pack[20:22])
-            # dst_port = int.from_bytes(pack[22:24])
-            if src_port not in ports:
-                continue
-
-            flags = int.from_bytes(pack[32:34]) & 0b111_111_111
-
-            # Порт открыт
-            if (flags & TcpFlags.SYN_ACK) == TcpFlags.SYN_ACK:
-                print(f"{src_ip}:{src_port}")
-
 def stealth_scan(
-    addresses: typ.Sequence[str],
-    ports: typ.Sequence[int],
+    addresses: Sequence[str],
+    ports: Sequence[int],
     delay: float,
     sniff_timeout: float,
 ) -> None:
@@ -304,6 +275,39 @@ def stealth_scan(
     logger.info("finished")
 
 
+def sniff_packets(
+    local_ip: str,
+    addresses: Sequence[str],
+    ports: Sequence[int],
+) -> None:
+    with socket.socket(
+        socket.AF_INET,
+        socket.SOCK_RAW,
+        socket.IPPROTO_TCP,
+    ) as sock:
+        while 42:
+            pack = sock.recv(65535)
+
+            src_ip = socket.inet_ntoa(pack[12:16])
+            if src_ip not in addresses:
+                continue
+
+            dst_ip = socket.inet_ntoa(pack[16:20])
+            if dst_ip != local_ip:
+                continue
+
+            src_port = int.from_bytes(pack[20:22])
+            # dst_port = int.from_bytes(pack[22:24])
+            if src_port not in ports:
+                continue
+
+            flags = int.from_bytes(pack[32:34]) & 0b111_111_111
+
+            # Порт открыт
+            if (flags & TcpFlags.SYN_ACK) == TcpFlags.SYN_ACK:
+                print(f"{src_ip}:{src_port}")
+
+
 # def get_service_names() -> dict[int, str]:
 #     rv = {}
 #     with open("/etc/services") as f:
@@ -328,7 +332,7 @@ class NameSpace(argparse.Namespace):
     rate_limit: int
 
 
-def normalize_ports(data: list[str]) -> typ.Iterable[int]:
+def normalize_ports(data: list[str]) -> Iterable[int]:
     for v in data:
         try:
             a, b = map(int, v.split("-", 1))
@@ -337,7 +341,7 @@ def normalize_ports(data: list[str]) -> typ.Iterable[int]:
             yield int(v)
 
 
-def normalize_addresses(data: list[str]) -> typ.Iterable[str]:
+def normalize_addresses(data: list[str]) -> Iterable[str]:
     for v in data:
         try:
             first, last = map(ipaddress.ip_address, v.split("-", 1))
@@ -405,6 +409,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if not args.addresses:
         parser.error("no addresses")
+
+    logger.addHandler(ColorHandler())
 
     if args.debug:
         logger.setLevel(logging.DEBUG)
