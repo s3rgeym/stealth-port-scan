@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dns-client"
+authors = [{name = "Sergey M"}]
+readme = "README.md"
+license = {file = "LICENSE"}
+description = "Stealth Port Scan using TCP/SYN method"
+
+classifiers = [
+  "Topic :: Internet"
+]
+
+requires-python = ">=3.11.7"
+
+dependencies = []
+
+dynamic = ["version"]
+
+# pip install -e '.[dev]'
+# pip install -e '.[test]'
+[project.optional-dependencies]
+test = [
+  "pytest",
+]
+
+dev = [
+  "black",
+  "pylint",
+]
+
+[project.urls]
+Repository = "https://github.com/s3rgeym/stealth-port-scan.git"
+
+[tool.setuptools.dynamic]
+version = {attr = "stealth_port_scan.__version__"}
+
+[project.scripts]
+stealth-port-scan = "stealth_port_scan:main"
