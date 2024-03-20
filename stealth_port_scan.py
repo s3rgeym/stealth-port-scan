@@ -19,6 +19,32 @@ __version__ = "0.0.1"
 __author__ = "Sergey M"
 
 
+WELL_KNOWN_PORTS = frozenset(
+    [
+        110,
+        143,
+        21,
+        22,
+        2222,
+        23,
+        25,
+        3306,
+        443,
+        465,
+        5432,
+        587,
+        5900,
+        6379,
+        80,
+        8080,
+        8443,
+        9000,
+        993,
+        995,
+    ]
+)
+
+
 class ANSI:
     CSI = "\x1b["
     RESET = f"{CSI}m"
@@ -196,69 +222,33 @@ def make_syn_packet(
     return iph + tcph[:16] + check.to_bytes(2) + tcph[18:]
 
 
-WELL_KNOWN_PORTS = frozenset(
-    [
-        110,
-        143,
-        21,
-        22,
-        2222,
-        23,
-        25,
-        3306,
-        443,
-        465,
-        5432,
-        587,
-        5900,
-        6379,
-        80,
-        8080,
-        8443,
-        9000,
-        993,
-        995,
-    ]
-)
+def sniff_packets(local_ip: str, addresses: set[str], ports: set[int]) -> None:
+    with socket.socket(
+        socket.AF_INET,
+        socket.SOCK_RAW,
+        socket.IPPROTO_TCP,
+    ) as sock:
+        while 42:
+            pack = sock.recv(65535)
 
+            src_ip = socket.inet_ntoa(pack[12:16])
+            if src_ip not in addresses:
+                continue
 
-class NameSpace(argparse.Namespace):
-    addresses: list[str]
-    ports: list[str]
-    debug: bool
-    sniff_timeout: float
-    rate_limit: int
+            dst_ip = socket.inet_ntoa(pack[16:20])
+            if dst_ip != local_ip:
+                continue
 
+            src_port = int.from_bytes(pack[20:22])
+            # dst_port = int.from_bytes(pack[22:24])
+            if src_port not in ports:
+                continue
 
-def normalize_ports(data: list[str]) -> typ.Iterable[int]:
-    for v in data:
-        try:
-            a, b = map(int, v.split("-", 1))
-            yield from range(a, b + 1)
-        except ValueError:
-            yield int(v)
+            flags = int.from_bytes(pack[32:34]) & 0b111_111_111
 
-
-def normalize_addresses(data: list[str]) -> typ.Iterable[str]:
-    for v in data:
-        try:
-            first, last = map(ipaddress.ip_address, v.split("-", 1))
-
-            yield from map(
-                str,
-                itertools.chain.from_iterable(
-                    ipaddress.summarize_address_range(first, last)
-                ),
-            )
-            continue
-        except ValueError:
-            pass
-
-        if "/" in v:
-            yield from map(str, ipaddress.ip_network(v))
-        else:
-            yield socket.gethostbyname(v)
-
+            # Порт открыт
+            if (flags & TcpFlags.SYN_ACK) == TcpFlags.SYN_ACK:
+                print(f"{src_ip}:{src_port}")
 
 def stealth_scan(
     addresses: typ.Sequence[str],
@@ -330,33 +320,42 @@ def stealth_scan(
 #     return dict(map(reversed, d.items()))
 
 
-def sniff_packets(local_ip: str, addresses: set[str], ports: set[int]) -> None:
-    with socket.socket(
-        socket.AF_INET,
-        socket.SOCK_RAW,
-        socket.IPPROTO_TCP,
-    ) as sock:
-        while 42:
-            pack = sock.recv(65535)
+class NameSpace(argparse.Namespace):
+    addresses: list[str]
+    ports: list[str]
+    debug: bool
+    sniff_timeout: float
+    rate_limit: int
 
-            src_ip = socket.inet_ntoa(pack[12:16])
-            if src_ip not in addresses:
-                continue
 
-            dst_ip = socket.inet_ntoa(pack[16:20])
-            if dst_ip != local_ip:
-                continue
+def normalize_ports(data: list[str]) -> typ.Iterable[int]:
+    for v in data:
+        try:
+            a, b = map(int, v.split("-", 1))
+            yield from range(a, b + 1)
+        except ValueError:
+            yield int(v)
 
-            src_port = int.from_bytes(pack[20:22])
-            # dst_port = int.from_bytes(pack[22:24])
-            if src_port not in ports:
-                continue
 
-            flags = int.from_bytes(pack[32:34]) & 0b111_111_111
+def normalize_addresses(data: list[str]) -> typ.Iterable[str]:
+    for v in data:
+        try:
+            first, last = map(ipaddress.ip_address, v.split("-", 1))
 
-            # Порт открыт
-            if (flags & TcpFlags.SYN_ACK) == TcpFlags.SYN_ACK:
-                print(f"{src_ip}:{src_port}")
+            yield from map(
+                str,
+                itertools.chain.from_iterable(
+                    ipaddress.summarize_address_range(first, last)
+                ),
+            )
+            continue
+        except ValueError:
+            pass
+
+        if "/" in v:
+            yield from map(str, ipaddress.ip_network(v))
+        else:
+            yield socket.gethostbyname(v)
 
 
 def parse_args(
